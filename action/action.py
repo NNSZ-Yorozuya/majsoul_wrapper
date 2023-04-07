@@ -9,7 +9,6 @@ import cv2
 import numpy as np
 import pyautogui
 from loguru import logger as logging
-import scipy
 
 from .classifier import Classify
 from ..sdk import Operation
@@ -145,7 +144,13 @@ def getHomographyMatrix(img1, img2, threshold=0.0):
 
 def screenShot():
     img = np.asarray(pyautogui.screenshot())
-    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    if DEBUG:
+        from PIL import Image
+        Image.fromarray(img).save("screen.jpeg")
+
+    return img
 
 
 class Layout:
@@ -181,22 +186,24 @@ class GUIInterface:
         # load classify model
         self.classify = Classify()
 
-    def _click_area(self, x, y, m, n):
-        x1 = x + random.random()*0.75*(m-x)
-        y1 = y + random.random()*0.75*(n-y)
+    def _click_area(self, x, y, m, n, offset_range=0.75):
+        x1 = x + (m-x)*(0.5 + (random.random()-0.5)*offset_range)
+        y1 = y + (n-y)*(0.5 + (random.random()-0.5)*offset_range)
 
-        time.sleep(random.random())
         logging.debug(f"click ({x1}, {y1})  (area: ({x}, {y}) ({m}, {n}))")
 
         pyautogui.moveTo(x1, y1)
-        time.sleep(0.3)
+        time.sleep(0.2 + 0.1 * random.random())
         pyautogui.click(x=x1, y=y1, button='left')
-        time.sleep(0.2)
+        time.sleep(0.2 + 0.1 * random.random())
         pyautogui.moveTo(self.waitPos[0], self.waitPos[1])
 
     def forceTiaoGuo(self):
         # 如果跳过按钮在屏幕上则强制点跳过，否则NoEffect
-        self.clickButton(self.tiaoguoImg, similarityThreshold=0.7)
+        try:
+            self.clickButton(self.tiaoguoImg, similarityThreshold=0.7)
+        except:
+            pass
 
     def actionDiscardTile(self, tile: str):
         time.sleep(0.5)  # wait for animation
@@ -274,7 +281,7 @@ class GUIInterface:
             i += 1
         return result
 
-    def clickButton(self, buttonImg, similarityThreshold=0.0):
+    def clickButton(self, buttonImg, similarityThreshold=0.6):
         # 点击吃碰杠胡立直自摸
         x0, y0 = np.int32(PosTransfer([0, 0], self.M))
         x1, y1 = np.int32(PosTransfer(Layout.size, self.M))
@@ -285,7 +292,10 @@ class GUIInterface:
         templ = cv2.resize(buttonImg, (m, n))
         x0, y0 = np.int32(PosTransfer([595, 557], self.M))
         x1, y1 = np.int32(PosTransfer([1508, 912], self.M))
-        img = screenShot()[y0:y1, x0:x1, :]
+
+        time.sleep(1)  # wait for animation
+        screen = screenShot()
+        img = screen[y0:y1, x0:x1, :]
         T = cv2.matchTemplate(img, templ, cv2.TM_SQDIFF, mask=templ.copy())
         _, _, (x, y), _ = cv2.minMaxLoc(T)
         if DEBUG:
@@ -295,9 +305,12 @@ class GUIInterface:
             cv2.waitKey(0)
         dst = img[y:y + n, x:x + m].copy()
         dst[templ == 0] = 0
-        if Similarity(templ, dst) >= similarityThreshold:
-            x += m*0.3  # click the lower part of button
-            self._click_area(x+x0, y+x0, x+x0+m, y+x0+n)
+
+        sim = Similarity(templ, dst)
+        if sim >= similarityThreshold:
+            self._click_area(x+x0, y+y0, x+x0+m, y+y0+n, 0.5)
+        else:
+            raise Exception('button not found')
 
     def clickCandidateMeld(self, tiles: List[str]):
         # 有多种不同的吃碰方法，二次点击选择
