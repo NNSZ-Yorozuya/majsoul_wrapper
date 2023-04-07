@@ -1,25 +1,34 @@
 # -*- coding: utf-8 -*-
-#捕获websocket数据并解析雀魂"动作"语义为Json
-import os
-import sys
-import time
+# 捕获websocket数据并解析雀魂"动作"语义为Json
+import argparse
+import base64
 import json
-import struct
+import os
 import pickle
 import random
-import argparse
-from xmlrpc.client import ServerProxy
-import base64
+import struct
+import time
 from enum import Enum
-import importlib
-from typing import List, Tuple, Dict
+from typing import List, Dict
+from xmlrpc.client import ServerProxy
 
 from google.protobuf.json_format import MessageToDict
+from loguru import logger as logging
 
 try:
     from .proto import liqi_pb2 as pb
 except:
     from proto import liqi_pb2 as pb
+
+keys = [0x84, 0x5e, 0x4e, 0x42, 0x39, 0xa2, 0x1f, 0x60, 0x1c]
+
+
+def decode(data: bytes):
+    data = bytearray(data)
+    for i in range(len(data)):
+        u = (23 ^ len(data)) + 5 * i + keys[i % len(keys)] & 255
+        data[i] ^= u
+    return bytes(data)
 
 
 class MsgType(Enum):
@@ -31,26 +40,27 @@ class MsgType(Enum):
 class LiqiProto:
 
     def __init__(self):
-        #解析一局的WS消息队列
+        # 解析一局的WS消息队列
         self.tot = 0  # 当前总共解析的包数量
         # (method_name:str,pb.MethodObj) for 256 sliding windows; req->res
         self.res_type = dict()  # int -> (method_name,pb2obj)
-        self.jsonProto = json.load(
-            open(os.path.join(os.path.dirname(__file__), 'proto/liqi.json'), 'r'))
+
+        with open(os.path.join(os.path.dirname(__file__), 'proto/liqi.json'), 'r') as f:
+            self.jsonProto = json.load(f)
 
     def init(self):
         self.tot = 0
         self.res_type.clear()
 
     def parse(self, flow_msg) -> bool:
-        #parse一帧WS flow msg，要求按顺序parse
+        # parse一帧WS flow msg，要求按顺序parse
         buf = flow_msg.content
         from_client = flow_msg.from_client
         result = dict()
 
         msg_type = MsgType(buf[0])  # 通信报文类型
         if msg_type == MsgType.Notify:
-            msg_block = fromProtobuf(buf[1:])      # 解析剩余报文结构
+            msg_block = fromProtobuf(buf[1:])  # 解析剩余报文结构
             method_name = msg_block[0]['data'].decode()
             """
             msg_block结构通常为
@@ -63,22 +73,22 @@ class LiqiProto:
             dict_obj = MessageToDict(proto_obj)
             if 'data' in dict_obj:
                 B = base64.b64decode(dict_obj['data'])
-                action_proto_obj = getattr(pb, dict_obj['name']).FromString(B)
+                action_proto_obj = getattr(pb, dict_obj['name']).FromString(decode(B))
                 action_dict_obj = MessageToDict(action_proto_obj)
                 dict_obj['data'] = action_dict_obj
             msg_id = self.tot
         else:
-            msg_id = struct.unpack('<H', buf[1:3])[0]   # 小端序解析报文编号(0~255)
-            msg_block = fromProtobuf(buf[3:])      # 解析剩余报文结构
+            msg_id = struct.unpack('<H', buf[1:3])[0]  # 小端序解析报文编号(0~255)
+            msg_block = fromProtobuf(buf[3:])  # 解析剩余报文结构
             """
             msg_block结构通常为
             [{'id': 1, 'type': 'string', 'data': b'.lq.FastTest.authGame'},
             {'id': 2, 'type': 'string','data': b'protobuf_bytes'}]
             """
             if msg_type == MsgType.Req:
-                assert(msg_id < 1 << 16)
-                assert(len(msg_block) == 2)
-                assert(msg_id not in self.res_type)
+                assert (msg_id < 1 << 16)
+                assert (len(msg_block) == 2)
+                assert (msg_id not in self.res_type)
                 method_name = msg_block[0]['data'].decode()
                 _, lq, service, rpc = method_name.split('.')
                 proto_domain = self.jsonProto['nested'][lq]['nested'][service]['methods'][rpc]
@@ -88,8 +98,8 @@ class LiqiProto:
                 self.res_type[msg_id] = (method_name, getattr(
                     pb, proto_domain['responseType']))  # wait response
             elif msg_type == MsgType.Res:
-                assert(len(msg_block[0]['data']) == 0)
-                assert(msg_id in self.res_type)
+                assert (len(msg_block[0]['data']) == 0)
+                assert (msg_id in self.res_type)
                 method_name, liqi_pb2_res = self.res_type.pop(msg_id)
                 proto_obj = liqi_pb2_res.FromString(msg_block[1]['data'])
                 dict_obj = MessageToDict(proto_obj)
@@ -106,36 +116,38 @@ def tamperUsetime(flow_msg) -> bool:
     for extending the time limit of the server to the client.
     Return whether the data has been tampered.
     """
+
     def getById(A, id):
         for d in A:
             if d['id'] == id:
                 return d
         return None
+
     buf = flow_msg.content
     from_client = flow_msg.from_client
     result = dict()
     msg_type = MsgType(buf[0])  # 通信报文类型
     if msg_type == MsgType.Notify:
-        L0 = fromProtobuf(buf[1:])      # 解析剩余报文结构
-        assert(toProtobuf(L0) == buf[1:])
+        L0 = fromProtobuf(buf[1:])  # 解析剩余报文结构
+        assert (toProtobuf(L0) == buf[1:])
         method_name = L0[0]['data'].decode()
         if method_name == '.lq.ActionPrototype':
             _, lq, message_name = method_name.split('.')
             liqi_pb2_notify = getattr(pb, message_name)
             L1 = fromProtobuf(L0[1]['data'])
-            assert(toProtobuf(L1) == L0[1]['data'])
+            assert (toProtobuf(L1) == L0[1]['data'])
             action_name = L1[1]['data'].decode()
             if action_name == 'ActionDealTile':
                 L2 = fromProtobuf(L1[2]['data'])
-                assert(toProtobuf(L2) == L1[2]['data'])
+                assert (toProtobuf(L2) == L1[2]['data'])
                 d3 = getById(L2, 4)
                 if d3 != None:
                     L3 = fromProtobuf(d3['data'])
                     if getById(L3, 5) != None:
                         d4 = getById(L3, 4)
                         if d4 != None:
-                            x = 1+L0[1]['begin']+2+L1[2]['begin'] + \
-                                2+d3['begin']+2+d4['begin']+1
+                            x = 1 + L0[1]['begin'] + 2 + L1[2]['begin'] + \
+                                2 + d3['begin'] + 2 + d4['begin'] + 1
                             old_value, p = parseVarint(buf, x)
                             if old_value < 20000:
                                 d4['data'] = 20000
@@ -148,7 +160,7 @@ def tamperUsetime(flow_msg) -> bool:
                         d3['data'] = toProtobuf(L3)
                         L1[2]['data'] = toProtobuf(L2)
                         L0[1]['data'] = toProtobuf(L1)
-                        flow_msg.content = buf[0:1]+toProtobuf(L0)
+                        flow_msg.content = buf[0:1] + toProtobuf(L0)
                         return True
     elif msg_type == MsgType.Req:
         msg_id = struct.unpack('<H', buf[1:3])[0]
@@ -159,12 +171,12 @@ def tamperUsetime(flow_msg) -> bool:
             x = None
             for d in data_block:
                 if d['id'] == 6:
-                    x = 3+msg_block[1]['begin']+2+d['begin']+1
+                    x = 3 + msg_block[1]['begin'] + 2 + d['begin'] + 1
             if x == None or buf[x] < 5:
                 return False
             new_usetime = int(random.randint(1, 4)).to_bytes(1, 'little')
-            print('[TamperUseTime] from', int(buf[x]), 'to', new_usetime)
-            flow_msg.content = buf[:x]+new_usetime+buf[x+1:]
+            logging.debug('[TamperUseTime] from', int(buf[x]), 'to', new_usetime)
+            flow_msg.content = buf[:x] + new_usetime + buf[x + 1:]
             return True
     return False
 
@@ -175,12 +187,12 @@ def toVarint(x: int) -> bytes:
     length = 0
     if x == 0:
         return b'\x00'
-    while(x > 0):
+    while (x > 0):
         length += 1
         data += (x & 127) << base
         x >>= 7
         if x > 0:
-            data += 1 << (base+7)
+            data += 1 << (base + 7)
         base += 8
     return data.to_bytes(length, 'little')
 
@@ -189,11 +201,11 @@ def parseVarint(buf, p):
     # parse a varint from protobuf
     data = 0
     base = 0
-    while(p < len(buf)):
+    while (p < len(buf)):
         data += (buf[p] & 127) << base
         base += 7
         p += 1
-        if buf[p-1] >> 7 == 0:
+        if buf[p - 1] >> 7 == 0:
             break
     return (data, p)
 
@@ -205,20 +217,20 @@ def fromProtobuf(buf) -> List[Dict]:
     """
     p = 0
     result = []
-    while(p < len(buf)):
+    while (p < len(buf)):
         block_begin = p
         block_type = (buf[p] & 7)
         block_id = buf[p] >> 3
         p += 1
         if block_type == 0:
-            #varint
+            # varint
             block_type = 'varint'
             data, p = parseVarint(buf, p)
         elif block_type == 2:
-            #string
+            # string
             block_type = 'string'
             s_len, p = parseVarint(buf, p)
-            data = buf[p:p+s_len]
+            data = buf[p:p + s_len]
             p += s_len
         else:
             raise Exception('unknow type:', block_type, ' at', p)
@@ -234,10 +246,10 @@ def toProtobuf(data: List[Dict]) -> bytes:
     result = b''
     for d in data:
         if d['type'] == 'varint':
-            result += ((d['id'] << 3)+0).to_bytes(length=1, byteorder='little')
+            result += ((d['id'] << 3) + 0).to_bytes(length=1, byteorder='little')
             result += toVarint(d['data'])
         elif d['type'] == 'string':
-            result += ((d['id'] << 3)+2).to_bytes(length=1, byteorder='little')
+            result += ((d['id'] << 3) + 2).to_bytes(length=1, byteorder='little')
             result += toVarint(len(d['data']))
             result += d['data']
         else:
@@ -257,13 +269,13 @@ def dumpWebSocket(filename='ws_dump.pkl'):
             for flow_msg in flow:
                 result = liqi.parse(flow_msg)
                 print(result)
-                print('-'*65)
-                #packet = flow_msg.content
-                #from_client = flow_msg.from_client
-                #print("[" + ("Sended" if from_client else "Reveived") +
+                print('-' * 65)
+                # packet = flow_msg.content
+                # from_client = flow_msg.from_client
+                # print("[" + ("Sended" if from_client else "Reveived") +
                 #      "]: decode the packet here: %r…" % packet)
                 tot += 1
-            history_msg = history_msg+flow
+            history_msg = history_msg + flow
             path = filename
             pickle.dump(history_msg, open(path, 'wb'))
         time.sleep(0.2)
@@ -276,7 +288,7 @@ def replayWebSocket(filename='ws_dump.pkl'):
     for flow_msg in history_msg:
         result = liqi.parse(flow_msg)
         print(result)
-        print('-'*65)
+        print('-' * 65)
 
 
 if __name__ == '__main__':
