@@ -105,21 +105,15 @@ def take():
 
 
 def RPC_init():
-    server = SimpleXMLRPCServer(('localhost', 37247))
+    host = os.getenv("RPC_HOST") or '127.0.0.1'
+    port = os.getenv("RPC_PORT") or 37247
+
+    server = SimpleXMLRPCServer((host, port))
     server.register_function(take, "take")
-    print("RPC Server Listening on 127.0.0.1:37247 for Client.")
     server.serve_forever()
+
+    print(f"RPC Server Listening on {host}:{port} for Client.")
 
 
 RPC_server = threading.Thread(target=RPC_init)
 RPC_server.start()
-
-# chrome_options.add_argument('--proxy-server=127.0.0.1:8080')
-# chrome_options.add_argument('--ignore-certificate-errors')
-
-if __name__ == '__main__':
-    # 回放websocket流量
-    replay_path = os.path.join(os.path.dirname(__file__), 'websocket_frames.pkl')
-    history_msg = pickle.load(open(replay_path, 'rb'))
-    activated_flows = ['fake_id']
-    messages_dict = {'fake_id': history_msg}

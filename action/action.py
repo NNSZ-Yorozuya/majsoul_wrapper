@@ -169,7 +169,8 @@ class GUIInterface:
         join = os.path.join
         root = os.path.dirname(__file__)
 
-        def load(name): return cv2.imread(join(root, 'template', name))
+        def load(name):
+            return cv2.imread(join(root, 'template', name))
 
         self.menuImg = load('menu.png')  # 初始菜单界面
         if (type(self.menuImg) == type(None)):
