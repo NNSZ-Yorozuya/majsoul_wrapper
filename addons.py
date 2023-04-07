@@ -34,7 +34,7 @@ class ClientWebSocket:
         """
         print('[handshake websocket]:', flow, flow.__dict__, dir(flow))
 
-    def websocket_start(self, flow: mitmproxy.websocket.WebSocketFlow):
+    def websocket_start(self, flow: mitmproxy.http.HTTPFlow):
         """
 
             A websocket connection has commenced.
@@ -42,7 +42,7 @@ class ClientWebSocket:
         """
         print('[new websocket]:', flow, flow.__dict__, dir(flow))
 
-    def websocket_message(self, flow: mitmproxy.websocket.WebSocketFlow):
+    def websocket_message(self, flow: mitmproxy.http.HTTPFlow):
         """
 
             Called when a WebSocket message is received from the client or
@@ -54,7 +54,7 @@ class ClientWebSocket:
             messages, corresponding to the BINARY and TEXT frame types.
 
         """
-        flow_msg = flow.messages[-1]
+        flow_msg = flow.websocket.messages[-1]
 
         with mutex:
             buffer.append(flow_msg)
@@ -70,7 +70,7 @@ class ClientWebSocket:
         print("[" + ("Sended" if from_client else "Reveived") +
               "] from '" + flow.id + "': decode the packet here: %r…" % packet)
 
-    def websocket_error(self, flow: mitmproxy.websocket.WebSocketFlow):
+    def websocket_error(self, flow: mitmproxy.http.HTTPFlow):
         """
 
             A websocket connection has had an error.
@@ -79,7 +79,7 @@ class ClientWebSocket:
 
         print("websocket_error, %r" % flow)
 
-    def websocket_end(self, flow: mitmproxy.websocket.WebSocketFlow):
+    def websocket_end(self, flow: mitmproxy.http.HTTPFlow):
         """
 
             A websocket connection has ended.
