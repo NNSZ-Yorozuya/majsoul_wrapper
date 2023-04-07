@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # 获取屏幕信息，并通过视觉方法标定手牌与按钮位置，仿真鼠标点击操作输出
 import os
+import random
 import time
 from typing import List, Tuple
 
@@ -8,6 +9,7 @@ import cv2
 import numpy as np
 import pyautogui
 from loguru import logger as logging
+import scipy
 
 from .classifier import Classify
 from ..sdk import Operation
@@ -30,7 +32,8 @@ def Similarity(img1: np.ndarray, img2: np.ndarray):
     n, m, c = img2.shape
     img1 = cv2.resize(img1, (m, n))
     if DEBUG:
-        cv2.imshow('diff', np.uint8(np.abs(np.float32(img1) - np.float32(img2))))
+        cv2.imshow('diff', np.uint8(
+            np.abs(np.float32(img1) - np.float32(img2))))
         cv2.waitKey(1)
     ksize = max(1, min(n, m) // 50)
     img1 = cv2.blur(img1, ksize=(ksize, ksize))
@@ -38,7 +41,8 @@ def Similarity(img1: np.ndarray, img2: np.ndarray):
     img1 = np.float32(img1)
     img2 = np.float32(img2)
     if DEBUG:
-        cv2.imshow('bit', np.uint8((np.abs(img1 - img2) < 30).sum(2) == 3) * 255)
+        cv2.imshow('bit', np.uint8(
+            (np.abs(img1 - img2) < 30).sum(2) == 3) * 255)
         cv2.waitKey(1)
     return ((np.abs(img1 - img2) < 30).sum(2) == 3).sum() / (n * m)
 
@@ -114,7 +118,8 @@ def ObjectLocalization(objImg: np.ndarray, targetImg: np.ndarray) -> np.ndarray:
             cv2.imshow('Homography match', img3)
             cv2.waitKey(1)
     else:
-        logging.debug("Not enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
+        logging.debug(
+            "Not enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
         M = None
     assert (type(M) == type(None) or (
             type(M) == np.ndarray and M.shape == (3, 3)))
@@ -163,7 +168,8 @@ class GUIInterface:
 
         self.menuImg = load('menu.png')  # 初始菜单界面
         if (type(self.menuImg) == type(None)):
-            raise FileNotFoundError("menu.png not found, please check the Chinese path")
+            raise FileNotFoundError(
+                "menu.png not found, please check the Chinese path")
         assert (self.menuImg.shape == (1080, 1920, 3))
         self.chiImg = load('chi.png')
         self.pengImg = load('peng.png')
@@ -175,24 +181,32 @@ class GUIInterface:
         # load classify model
         self.classify = Classify()
 
+    def _click_area(self, x, y, m, n):
+        x1 = x + random.random()*0.75*(m-x)
+        y1 = y + random.random()*0.75*(n-y)
+
+        time.sleep(random.random())
+        logging.debug(f"click ({x1}, {y1})  (area: ({x}, {y}) ({m}, {n}))")
+
+        pyautogui.moveTo(x1, y1)
+        time.sleep(0.3)
+        pyautogui.click(x=x1, y=y1, button='left')
+        time.sleep(0.2)
+        pyautogui.moveTo(self.waitPos[0], self.waitPos[1])
+
     def forceTiaoGuo(self):
         # 如果跳过按钮在屏幕上则强制点跳过，否则NoEffect
         self.clickButton(self.tiaoguoImg, similarityThreshold=0.7)
 
     def actionDiscardTile(self, tile: str):
+        time.sleep(0.5)  # wait for animation
         L = self._getHandTiles()
-        for t, (x, y) in L:
+        for t, (x, y, m, n) in reversed(L):  # tsumogiri if possible
             if t == tile:
-                pyautogui.moveTo(x=x, y=y)
-                time.sleep(0.3)
-                pyautogui.click(x=x, y=y, button='left')
-                time.sleep(1)
-                # out of screen
-                pyautogui.moveTo(x=self.waitPos[0], y=self.waitPos[1])
+                self._click_area(x, y, m, n)
                 return True
         raise Exception(
             'GUIInterface.discardTile tile not found. L:', L, 'tile:', tile)
-        return False
 
     def actionChiPengGang(self, type_: Operation, tiles: List[str]):
         if type_ == Operation.NoEffect:
@@ -224,7 +238,7 @@ class GUIInterface:
             self.waitPos = np.int32(PosTransfer([100, 100], self.M))
         return result
 
-    def _getHandTiles(self) -> List[Tuple[str, Tuple[int, int]]]:
+    def _getHandTiles(self) -> List[Tuple[str, Tuple[int, int, int, int]]]:
         # return a list of my tiles' position
         result = []
         assert (type(self.M) != type(None))
@@ -236,24 +250,25 @@ class GUIInterface:
         start = np.int32(PosTransfer([235, 1002], self.M))
         O = PosTransfer([0, 0], self.M)
         colorThreshold = 110
-        tileThreshold = np.int32(0.7 * (PosTransfer(Layout.tileSize, self.M) - O))
+        tileThreshold = np.int32(
+            0.7 * (PosTransfer(Layout.tileSize, self.M) - O))
         fail = 0
         maxFail = np.int32(PosTransfer([100, 0], self.M) - O)[0]
         i = 0
         while fail < maxFail:
-            x, y = start[0] + i, start[1]
+            x, y = start[0]+i, start[1]
             if all(img[y, x, :] > colorThreshold):
                 fail = 0
                 img[y, x, :] = colorThreshold
                 retval, image, mask, rect = cv2.floodFill(
                     image=img, mask=None, seedPoint=(x, y), newVal=(0, 0, 0),
-                    loDiff=(0, 0, 0), upDiff=tuple([255 - colorThreshold] * 3), flags=cv2.FLOODFILL_FIXED_RANGE)
+                    loDiff=(0, 0, 0), upDiff=tuple([255-colorThreshold]*3), flags=cv2.FLOODFILL_FIXED_RANGE)
                 x, y, dx, dy = rect
                 if dx > tileThreshold[0] and dy > tileThreshold[1]:
-                    tile_img = screen_img[y:y + dy, x:x + dx, :]
+                    tile_img = screen_img[y:y+dy, x:x+dx, :]
                     tileStr = self.classify(tile_img)
-                    result.append((tileStr, (x + dx // 2, y + dy // 2)))
-                    i = x + dx - start[0]
+                    result.append((tileStr, (x, y, x+dx, y+dy)))
+                    i = x+dx-start[0]
             else:
                 fail += 1
             i += 1
@@ -281,9 +296,8 @@ class GUIInterface:
         dst = img[y:y + n, x:x + m].copy()
         dst[templ == 0] = 0
         if Similarity(templ, dst) >= similarityThreshold:
-            pyautogui.click(x=x + x0 + m // 2, y=y + y0 + n // 2, duration=0.2)
-            time.sleep(0.5)
-            pyautogui.moveTo(x=self.waitPos[0], y=self.waitPos[1])
+            x += m*0.3  # click the lower part of button
+            self._click_area(x+x0, y+x0, x+x0+m, y+x0+n)
 
     def clickCandidateMeld(self, tiles: List[str]):
         # 有多种不同的吃碰方法，二次点击选择
@@ -317,7 +331,7 @@ class GUIInterface:
                     if dx > tileThreshold[0] and dy > tileThreshold[1]:
                         tile_img = screen_img[y:y + dy, x:x + dx, :]
                         tileStr = self.classify(tile_img)
-                        result.append((tileStr, (x + dx // 2, y + dy // 2)))
+                        result.append((tileStr, (x, y, x+dx, y+dy)))
                         leftBound = min(leftBound, x)
                         rightBound = max(rightBound, x + dx)
                 i += 1
@@ -327,15 +341,12 @@ class GUIInterface:
         logging.debug(f'clickCandidateMeld tiles: {result}')
         assert (len(result) % 2 == 0)
         for i in range(0, len(result), 2):
-            x, y = result[i][1]
+            x, y, m, n = result[i][1]
             if tuple(sorted([result[i][0], result[i + 1][0]])) == tiles:
-                pyautogui.click(x=x, y=y, duration=0.2)
-                time.sleep(1)
-                pyautogui.moveTo(x=self.waitPos[0], y=self.waitPos[1])
+                self._click_area(x, y, m, n)
                 return True
         raise Exception('combination not found, tiles:',
                         tiles, ' combination:', result)
-        return False
 
     def actionReturnToMenu(self):
         # 在终局以后点击确定跳转回菜单主界面
