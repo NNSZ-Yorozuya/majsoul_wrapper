@@ -21,6 +21,8 @@ pyautogui.FAILSAFE = False  # 开启鼠标移动到左上角自动退出
 def auto_retry(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
+        waitPos = getattr(args[0], "waitPos", np.int32([0, 0]))
+
         err = None
 
         for i in range(10):
@@ -31,7 +33,7 @@ def auto_retry(func):
                 logging.warning(f"{func.__name__} raised {type(e).__name__}, "
                                f"retrying... {i+1}/10")
 
-                pyautogui.moveTo(0, 0)
+                pyautogui.moveTo(waitPos[0], waitPos[1])
 
         raise err
     return wrapper
