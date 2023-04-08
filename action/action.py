@@ -3,6 +3,7 @@
 import os
 import random
 import time
+from functools import wraps
 from typing import List, Tuple
 
 import cv2
@@ -15,6 +16,26 @@ from ..sdk import Operation
 
 pyautogui.PAUSE = 0  # 函数执行后暂停时间
 pyautogui.FAILSAFE = False  # 开启鼠标移动到左上角自动退出
+
+
+def auto_retry(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        err = None
+
+        for i in range(10):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                err = e
+                logging.warning(f"{func.__name__} raised {type(e).__name__}, "
+                               f"retrying... {i+1}/10")
+
+                pyautogui.moveTo(0, 0)
+
+        raise err
+    return wrapper
+
 
 DEBUG = False  # 是否显示检测中间结果
 
@@ -206,8 +227,8 @@ class GUIInterface:
         except:
             pass
 
+    @auto_retry
     def actionDiscardTile(self, tile: str):
-        time.sleep(0.5)  # wait for animation
         L = self._getHandTiles()
         for t, (x, y, m, n) in reversed(L):  # tsumogiri if possible
             if t == tile:
@@ -250,10 +271,11 @@ class GUIInterface:
         # return a list of my tiles' position
         result = []
         assert (type(self.M) != type(None))
-        screen_img1 = screenShot()
-        time.sleep(0.5)
-        screen_img2 = screenShot()
-        screen_img = np.minimum(screen_img1, screen_img2)  # 消除高光动画
+        # screen_img1 = screenShot()
+        # time.sleep(0.5)
+        # screen_img2 = screenShot()
+        # screen_img = np.minimum(screen_img1, screen_img2)  # 消除高光动画
+        screen_img = screenShot()  # 失败直接重试
         img = screen_img.copy()  # for calculation
         start = np.int32(PosTransfer([235, 1002], self.M))
         O = PosTransfer([0, 0], self.M)
@@ -282,6 +304,7 @@ class GUIInterface:
             i += 1
         return result
 
+    @auto_retry
     def clickButton(self, buttonImg, similarityThreshold=0.6):
         # 点击吃碰杠胡立直自摸
         x0, y0 = np.int32(PosTransfer([0, 0], self.M))
@@ -294,7 +317,6 @@ class GUIInterface:
         x0, y0 = np.int32(PosTransfer([595, 557], self.M))
         x1, y1 = np.int32(PosTransfer([1508, 912], self.M))
 
-        time.sleep(1)  # wait for animation
         screen = screenShot()
         img = screen[y0:y1, x0:x1, :]
         T = cv2.matchTemplate(img, templ, cv2.TM_SQDIFF, mask=templ.copy())
@@ -313,6 +335,7 @@ class GUIInterface:
         else:
             raise Exception('button not found')
 
+    @auto_retry
     def clickCandidateMeld(self, tiles: List[str]):
         # 有多种不同的吃碰方法，二次点击选择
         assert (len(tiles) == 2)
@@ -362,6 +385,7 @@ class GUIInterface:
         raise Exception('combination not found, tiles:',
                         tiles, ' combination:', result)
 
+    @auto_retry
     def actionReturnToMenu(self):
         # 在终局以后点击确定跳转回菜单主界面
         x, y = np.int32(PosTransfer((1785, 1003), self.M))  # 终局确认按钮
@@ -377,6 +401,7 @@ class GUIInterface:
                 logging.debug(f'Similarity: {S}')
                 pyautogui.click(x=x, y=y, duration=0.5)
 
+    @auto_retry
     def actionBeginGame(self, level: int):
         # 从开始界面点击匹配对局, level=0~4 (铜/银/金/玉/王座之间)
         time.sleep(2)
