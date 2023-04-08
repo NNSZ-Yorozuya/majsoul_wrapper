@@ -387,7 +387,6 @@ class GUIInterface:
         raise Exception('combination not found, tiles:',
                         tiles, ' combination:', result)
 
-    @auto_retry
     def actionReturnToMenu(self):
         # 在终局以后点击确定跳转回菜单主界面
         x, y = np.int32(PosTransfer((1785, 1003), self.M))  # 终局确认按钮
@@ -403,10 +402,13 @@ class GUIInterface:
                 logging.debug(f'Similarity: {S}')
                 pyautogui.click(x=x, y=y, duration=0.5)
 
-    @auto_retry
-    def actionBeginGame(self, level: int):
-        # 从开始界面点击匹配对局, level=0~4 (铜/银/金/玉/王座之间)
-        time.sleep(2)
+    def actionBeginGame(self, level: int, wind: int):
+        """
+        从开始界面点击匹配对局
+
+        :param level: 0~4对应铜/银/金/玉/王座
+        :param wind: 0对应四人东，1对应四人南
+        """
         x, y = np.int32(PosTransfer(Layout.duanWeiChang, self.M))
         pyautogui.click(x, y)
         time.sleep(2)
@@ -421,5 +423,5 @@ class GUIInterface:
         x, y = np.int32(PosTransfer(Layout.menuButtons[level], self.M))
         pyautogui.click(x, y)
         time.sleep(2)
-        x, y = np.int32(PosTransfer(Layout.menuButtons[0], self.M))  # 四人东
+        x, y = np.int32(PosTransfer(Layout.menuButtons[wind], self.M))
         pyautogui.click(x, y)
