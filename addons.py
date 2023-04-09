@@ -59,7 +59,7 @@ def RPC_init():
     host = os.getenv("RPC_HOST") or '127.0.0.1'
     port = os.getenv("RPC_PORT") or 37247
 
-    server = SimpleXMLRPCServer((host, port))
+    server = SimpleXMLRPCServer((host, port), logRequests=False)
     server.register_function(take, "take")
     server.register_function(hello, "hello")
     server.serve_forever()
