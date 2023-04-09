@@ -14,34 +14,6 @@ mutex = Lock()
 
 
 class ClientWebSocket:
-
-    def __init__(self):
-        pass
-
-    # Websocket lifecycle
-
-    def websocket_handshake(self, flow: mitmproxy.http.HTTPFlow):
-        """
-
-            Called when a client wants to establish a WebSocket connection. The
-
-            WebSocket-specific headers can be manipulated to alter the
-
-            handshake. The flow object is guaranteed to have a non-None request
-
-            attribute.
-
-        """
-        print('[handshake websocket]:', flow, flow.__dict__, dir(flow))
-
-    def websocket_start(self, flow: mitmproxy.http.HTTPFlow):
-        """
-
-            A websocket connection has commenced.
-
-        """
-        print('[new websocket]:', flow, flow.__dict__, dir(flow))
-
     def websocket_message(self, flow: mitmproxy.http.HTTPFlow):
         """
 
@@ -59,33 +31,8 @@ class ClientWebSocket:
         with mutex:
             buffer.append(flow_msg)
 
-        # This is cheating, extending the time limit to 7 seconds
-        # tamperUsetime(flow_msg)
-        # result = liqi.parse(flow_msg)
-        # print(result)
-        # print('-'*65)
-
         packet = flow_msg.content
         from_client = flow_msg.from_client
-        print("[" + ("Sended" if from_client else "Reveived") +
-              "] from '" + flow.id + "': decode the packet here: %r…" % packet)
-
-    def websocket_error(self, flow: mitmproxy.http.HTTPFlow):
-        """
-
-            A websocket connection has had an error.
-
-        """
-
-        print("websocket_error, %r" % flow)
-
-    def websocket_end(self, flow: mitmproxy.http.HTTPFlow):
-        """
-
-            A websocket connection has ended.
-
-        """
-        print('[end websocket]:', flow, flow.__dict__, dir(flow))
 
 
 addons = [
