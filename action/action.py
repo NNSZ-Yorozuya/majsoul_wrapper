@@ -18,6 +18,11 @@ pyautogui.PAUSE = 0  # 函数执行后暂停时间
 pyautogui.FAILSAFE = False  # 开启鼠标移动到左上角自动退出
 
 
+class ActionFailed(Exception):
+    def __init__(self, *args: object) -> None:
+        super().__init__(*args)
+
+
 def auto_retry(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -28,13 +33,13 @@ def auto_retry(func):
         for i in range(10):
             try:
                 return func(*args, **kwargs)
-            except Exception as e:
+            except ActionFailed as e:
                 err = e
-                logging.warning(f"{func.__name__} raised {type(e).__name__}, "
-                               f"retrying... {i+1}/10")
+                logging.warning(f"{func.__name__} failed ({e}), "
+                                f"retrying... {i+1}/10")
 
                 pyautogui.moveTo(waitPos[0], waitPos[1])
-                time.sleep(0.1)
+                time.sleep(0.3)
 
         raise err
     return wrapper
@@ -233,15 +238,20 @@ class GUIInterface:
 
     @auto_retry
     def actionDiscardTile(self, tile: str):
-        L = self._getHandTiles()
-        for t, (x, y, m, n) in reversed(L):  # tsumogiri if possible
+        hand = self._getHandTiles()
+        for t, (x, y, m, n) in reversed(hand):  # tsumogiri if possible
             if t == tile:
                 self._click_area(x, y, m, n)
-                return True
-        raise Exception(
-            'GUIInterface.discardTile tile not found. L:', L, 'tile:', tile)
 
-    def actionChiPengGang(self, type_: Operation, tiles: List[str]):
+                new_hand = self._getHandTiles()
+                if len(hand) - len(new_hand) == 1:
+                    return
+                else:
+                    raise ActionFailed(
+                        'tile found but failed to discard.  hand:', hand, 'tile:', tile)
+        raise ActionFailed('tile not found. hand:', hand, 'tile:', tile)
+
+    def actionChiPengGang(self, type_: Operation):
         if type_ == Operation.NoEffect:
             self.clickButton(self.tiaoguoImg)
         elif type_ == Operation.Chi:
@@ -339,8 +349,22 @@ class GUIInterface:
         sim = Similarity(templ, dst)
         if sim >= similarityThreshold:
             self._click_area(x+x0, y+y0, x+x0+m, y+y0+n, 0.5)
+
+            # 等待按钮消失
+            for _ in range(5):
+                screen = screenShot()
+                dst = screen[y0:y1, x0:x1, :][y:y + n, x:x + m].copy()
+                dst[templ == 0] = 0
+
+                now_sim = Similarity(templ, dst)
+                if now_sim < similarityThreshold:
+                    return
+
+                time.sleep(0.2)
+            else:
+                raise ActionFailed('button found but failed to click')
         else:
-            raise Exception('button not found')
+            raise ActionFailed('button not found')
 
     @auto_retry
     def clickCandidateMeld(self, tiles: List[str]):
@@ -382,15 +406,14 @@ class GUIInterface:
         result = sorted(result, key=lambda x: x[1][0])
         if len(result) == 0:
             return True  # 其他人先抢先Meld了！
-        logging.debug(f'clickCandidateMeld tiles: {result}')
         assert (len(result) % 2 == 0)
         for i in range(0, len(result), 2):
             if result[i][0] == tiles[0] and result[i + 1][0] == tiles[1]:
                 x, y, m, n = result[i][1]
                 self._click_area(x, y, m, n)
                 return True
-        raise Exception('combination not found, tiles:',
-                        tiles, ' combination:', result)
+        raise ActionFailed('combination not found, tiles:',
+                           tiles, ' combination:', result)
 
     def actionReturnToMenu(self):
         # 在终局以后点击确定跳转回菜单主界面
@@ -404,7 +427,6 @@ class GUIInterface:
             if S > 0.5:
                 return True
             else:
-                logging.debug(f'Similarity: {S}')
                 pyautogui.click(x=x, y=y, duration=0.5)
 
     def actionBeginGame(self, level: int, wind: int):
