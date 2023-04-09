@@ -34,6 +34,7 @@ def auto_retry(func):
                                f"retrying... {i+1}/10")
 
                 pyautogui.moveTo(waitPos[0], waitPos[1])
+                time.sleep(0.1)
 
         raise err
     return wrapper
@@ -380,8 +381,8 @@ class GUIInterface:
         logging.debug(f'clickCandidateMeld tiles: {result}')
         assert (len(result) % 2 == 0)
         for i in range(0, len(result), 2):
-            x, y, m, n = result[i][1]
-            if tuple(sorted([result[i][0], result[i + 1][0]])) == tiles:
+            if result[i][0] == tiles[0] and result[i + 1][0] == tiles[1]:
+                x, y, m, n = result[i][1]
                 self._click_area(x, y, m, n)
                 return True
         raise Exception('combination not found, tiles:',
