@@ -206,6 +206,7 @@ class GUIInterface:
         self.gangImg = load('gang.png')
         self.huImg = load('hu.png')
         self.zimoImg = load('zimo.png')
+        self.liujuImg = load('liuju.png')
         self.tiaoguoImg = load('tiaoguo.png')
         self.liqiImg = load('liqi.png')
         # load classify model
@@ -260,6 +261,9 @@ class GUIInterface:
 
     def actionZimo(self):
         self.clickButton(self.zimoImg)
+
+    def actionLiuju(self):
+        self.clickButton(self.liujuImg)
 
     def calibrateMenu(self):
         # if the browser is on the initial menu, set self.M and return to True
