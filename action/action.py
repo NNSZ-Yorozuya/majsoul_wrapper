@@ -378,20 +378,6 @@ class GUIInterface:
         sim = similarity(templ, dst)
         if sim >= similarityThreshold:
             self._click_area(x + x0, y + y0, x + x0 + m, y + y0 + n, 0.5)
-
-            # 等待按钮消失
-            for _ in range(5):
-                screen = self._screenshot()
-                dst = screen[y0:y1, x0:x1, :][y:y + n, x:x + m].copy()
-                dst[templ == 0] = 0
-
-                now_sim = similarity(templ, dst)
-                if now_sim < similarityThreshold:
-                    return
-
-                time.sleep(0.2)
-            else:
-                raise ActionFailed('button found but failed to click')
         else:
             raise ActionFailed('button not found')
 
