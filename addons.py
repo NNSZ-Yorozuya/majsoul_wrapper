@@ -31,9 +31,6 @@ class ClientWebSocket:
         with mutex:
             buffer.append(flow_msg)
 
-        packet = flow_msg.content
-        from_client = flow_msg.from_client
-
 
 addons = [
     ClientWebSocket()

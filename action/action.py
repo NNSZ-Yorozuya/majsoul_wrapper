@@ -4,18 +4,17 @@ import os
 import random
 import time
 from functools import wraps
-from typing import List, Tuple
+from pathlib import Path
+from typing import List, Tuple, Optional
 
 import cv2
 import numpy as np
-import pyautogui
+from PIL import ImageFile
 from loguru import logger as logging
+from playwright.sync_api import Page
 
 from .classifier import Classify
 from ..sdk import Operation
-
-pyautogui.PAUSE = 0  # 函数执行后暂停时间
-pyautogui.FAILSAFE = False  # 开启鼠标移动到左上角自动退出
 
 
 class ActionFailed(Exception):
@@ -23,37 +22,21 @@ class ActionFailed(Exception):
         super().__init__(*args)
 
 
-def auto_retry(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        waitPos = getattr(args[0], "waitPos", np.int32([0, 0]))
-
-        err = None
-
-        for i in range(10):
-            try:
-                return func(*args, **kwargs)
-            except ActionFailed as e:
-                err = e
-                logging.warning(f"{func.__name__} failed ({e}), "
-                                f"retrying... {i+1}/10")
-
-                pyautogui.moveTo(waitPos[0], waitPos[1])
-                time.sleep(0.3)
-
-        raise err
-    return wrapper
+# 是否显示检测中间结果
+DEBUG = os.getenv("DEBUG")
+if DEBUG is not None:
+    DEBUG = DEBUG.lower() == 'true'
+    logging.info("DEBUG: true")
+else:
+    DEBUG = False
 
 
-DEBUG = False  # 是否显示检测中间结果
-
-
-def PosTransfer(pos, M: np.ndarray) -> np.ndarray:
+def pos_transform(pos, M: np.ndarray) -> np.ndarray:
     assert (len(pos) == 2)
     return cv2.perspectiveTransform(np.float32([[pos]]), M)[0][0]
 
 
-def Similarity(img1: np.ndarray, img2: np.ndarray):
+def similarity(img1: np.ndarray, img2: np.ndarray):
     assert (len(img1.shape) == len(img2.shape) == 3)
     if img1.shape[0] < img2.shape[0]:
         img1, img2 = img2, img1
@@ -75,7 +58,7 @@ def Similarity(img1: np.ndarray, img2: np.ndarray):
     return ((np.abs(img1 - img2) < 30).sum(2) == 3).sum() / (n * m)
 
 
-def ObjectLocalization(objImg: np.ndarray, targetImg: np.ndarray) -> np.ndarray:
+def ObjectLocalization(objImg: np.ndarray, targetImg: np.ndarray) -> Optional[np.ndarray]:
     """
     https://docs.opencv.org/master/dc/dc3/tutorial_py_matcher.html
     Feature based object detection
@@ -88,6 +71,10 @@ def ObjectLocalization(objImg: np.ndarray, targetImg: np.ndarray) -> np.ndarray:
     # find the keypoints and descriptors with ORB
     kp1, des1 = orb.detectAndCompute(img1, None)
     kp2, des2 = orb.detectAndCompute(img2, None)
+
+    if des1 is None or des2 is None:
+        return None
+
     # FLANN parameters
     FLANN_INDEX_LSH = 6
     index_params = dict(algorithm=FLANN_INDEX_LSH,
@@ -97,8 +84,10 @@ def ObjectLocalization(objImg: np.ndarray, targetImg: np.ndarray) -> np.ndarray:
     search_params = dict(checks=50)  # or pass empty dictionary
     flann = cv2.FlannBasedMatcher(index_params, search_params)
     matches = flann.knnMatch(des1, des2, k=2)
+
     # Need to draw only good matches, so create a mask
     matchesMask = [[0, 0] for i in range(len(matches))]
+
     # store all the good matches as per Lowe's ratio test.
     good = []
     for i, j in enumerate(matches):
@@ -108,6 +97,7 @@ def ObjectLocalization(objImg: np.ndarray, targetImg: np.ndarray) -> np.ndarray:
                 good.append(m)
                 matchesMask[i] = [1, 0]
     logging.debug(f'  Number of good matches: {len(good)}')
+
     if DEBUG:
         # draw
         draw_params = dict(matchColor=(0, 255, 0),
@@ -119,6 +109,7 @@ def ObjectLocalization(objImg: np.ndarray, targetImg: np.ndarray) -> np.ndarray:
         img3 = cv2.pyrDown(img3)
         cv2.imshow('ORB match', img3)
         cv2.waitKey(1)
+
     # Homography
     MIN_MATCH_COUNT = 50
     if len(good) > MIN_MATCH_COUNT:
@@ -149,37 +140,25 @@ def ObjectLocalization(objImg: np.ndarray, targetImg: np.ndarray) -> np.ndarray:
         logging.debug(
             "Not enough matches are found - {}/{}".format(len(good), MIN_MATCH_COUNT))
         M = None
-    assert (type(M) == type(None) or (
-            type(M) == np.ndarray and M.shape == (3, 3)))
+    assert (M is None or isinstance(M, np.ndarray) and M.shape == (3, 3))
     return M
 
 
-def getHomographyMatrix(img1, img2, threshold=0.0):
+def getHomographyMatrix(img1: np.array, img2: np.array, threshold: float = 0.0):
     # if similarity>threshold return M
     # else return None
     M = ObjectLocalization(img1, img2)
-    if type(M) != type(None):
+    if M is not None:
         logging.debug(f'  Homography Matrix: {M}', )
         n, m, c = img1.shape
-        x0, y0 = np.int32(PosTransfer([0, 0], M))
-        x1, y1 = np.int32(PosTransfer([m, n], M))
+        x0, y0 = np.int32(pos_transform([0, 0], M))
+        x1, y1 = np.int32(pos_transform([m, n], M))
         sub_img = img2[y0:y1, x0:x1, :]
-        S = Similarity(img1, sub_img)
+        S = similarity(img1, sub_img)
         logging.debug(f'Similarity: {S}', )
         if S > threshold:
             return M
     return None
-
-
-def screenShot():
-    img = np.asarray(pyautogui.screenshot())
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-    if DEBUG:
-        from PIL import Image
-        Image.fromarray(img).save("screen.jpeg")
-
-    return img
 
 
 class Layout:
@@ -191,21 +170,54 @@ class Layout:
 
 
 class GUIInterface:
+    page: Page
 
-    def __init__(self):
-        self.M = None  # Homography matrix from (1920,1080) to real window
+    @staticmethod
+    def _auto_retry(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            assert len(args) != 0 and isinstance(args[0], GUIInterface)
+
+            self: GUIInterface = args[0]
+
+            waitPos = getattr(self, "waitPos", [0, 0])
+            page = self.page
+
+            err = None
+
+            for i in range(10):
+                try:
+                    return func(*args, **kwargs)
+                except ActionFailed as e:
+                    err = e
+                    logging.warning(f"{func.__name__} failed ({e}), "
+                                    f"retrying... {i + 1}/10")
+
+                    page.mouse.move(waitPos[0], waitPos[1])
+                    time.sleep(0.3)
+
+            raise err
+
+        return wrapper
+
+    def __init__(self, page: Page):
+        self.page = page
+
+        # Homography matrix from (1920,1080) to real window
+        self.M = None
+
         # load template imgs
-        join = os.path.join
-        root = os.path.dirname(__file__)
+        root = Path(__file__).parent
 
-        def load(name):
-            return cv2.imread(join(root, 'template', name))
+        def load(name: str):
+            p = root / 'template' / name
+            if not p.exists():
+                raise FileNotFoundError(f"{name} not found")
+            return cv2.imread(str(p))
 
-        self.menuImg = load('menu.png')  # 初始菜单界面
-        if (type(self.menuImg) == type(None)):
-            raise FileNotFoundError(
-                "menu.png not found, please check the Chinese path")
-        assert (self.menuImg.shape == (1080, 1920, 3))
+        self.menuImg = load('menu.png')
+        assert self.menuImg.shape == (1080, 1920, 3)
+
         self.chiImg = load('chi.png')
         self.pengImg = load('peng.png')
         self.gangImg = load('gang.png')
@@ -214,41 +226,57 @@ class GUIInterface:
         self.liujuImg = load('liuju.png')
         self.tiaoguoImg = load('tiaoguo.png')
         self.liqiImg = load('liqi.png')
+
         # load classify model
         self.classify = Classify()
 
+    def _screenshot(self) -> np.array:
+        if DEBUG:
+            bytes = self.page.screenshot(path="screen.png")
+        else:
+            bytes = self.page.screenshot()
+
+        p = ImageFile.Parser()
+        p.feed(bytes)
+        img = p.close()
+
+        img = np.asarray(img)
+        img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
+
+        if DEBUG:
+            cv2.imshow('screenshot', img)
+            cv2.waitKey(1)
+
+        return img
+
     def _click_area(self, x, y, m, n, offset_range=0.75):
-        x1 = x + (m-x)*(0.5 + (random.random()-0.5)*offset_range)
-        y1 = y + (n-y)*(0.5 + (random.random()-0.5)*offset_range)
+        x1 = int(x + (m - x) * (0.5 + (random.random() - 0.5) * offset_range))
+        y1 = int(y + (n - y) * (0.5 + (random.random() - 0.5) * offset_range))
 
         logging.debug(f"click ({x1}, {y1})  (area: ({x}, {y}) ({m}, {n}))")
 
-        pyautogui.moveTo(x1, y1)
+        self.page.mouse.move(x1, y1)
         time.sleep(0.2 + 0.1 * random.random())
-        pyautogui.click(x=x1, y=y1, button='left')
+        self.page.mouse.click(x1, y1, button='left')
         time.sleep(0.2 + 0.1 * random.random())
-        pyautogui.moveTo(self.waitPos[0], self.waitPos[1])
+        self.page.mouse.move(self.waitPos[0], self.waitPos[1])
 
     def forceTiaoGuo(self):
-        # 如果跳过按钮在屏幕上则强制点跳过，否则NoEffect
+        """
+        如果跳过按钮在屏幕上则强制点跳过，否则NoEffect
+        """
         try:
             self.clickButton(self.tiaoguoImg, similarityThreshold=0.7)
-        except:
+        except ActionFailed:
             pass
 
-    @auto_retry
+    @_auto_retry
     def actionDiscardTile(self, tile: str):
         hand = self._getHandTiles()
         for t, (x, y, m, n) in reversed(hand):  # tsumogiri if possible
             if t == tile:
                 self._click_area(x, y, m, n)
-
-                new_hand = self._getHandTiles()
-                if len(hand) - len(new_hand) == 1:
-                    return
-                else:
-                    raise ActionFailed(
-                        'tile found but failed to discard.  hand:', hand, 'tile:', tile)
+                return
         raise ActionFailed('tile not found. hand:', hand, 'tile:', tile)
 
     def actionChiPengGang(self, type_: Operation):
@@ -278,63 +306,64 @@ class GUIInterface:
     def calibrateMenu(self):
         # if the browser is on the initial menu, set self.M and return to True
         # if not return False
-        self.M = getHomographyMatrix(self.menuImg, screenShot(), threshold=0.7)
-        result = type(self.M) != type(None)
-        if result:
-            self.waitPos = np.int32(PosTransfer([100, 100], self.M))
-        return result
+        self.M = getHomographyMatrix(self.menuImg, self._screenshot(), threshold=0.6)
+        if self.M is not None:
+            self.waitPos = np.int32(pos_transform([100, 100], self.M)).tolist()
+            return True
+        else:
+            return False
 
     def _getHandTiles(self) -> List[Tuple[str, Tuple[int, int, int, int]]]:
         # return a list of my tiles' position
         result = []
         assert (type(self.M) != type(None))
-        # screen_img1 = screenShot()
+        # screen_img1 = self._screenshot()
         # time.sleep(0.5)
-        # screen_img2 = screenShot()
+        # screen_img2 = self._screenshot()
         # screen_img = np.minimum(screen_img1, screen_img2)  # 消除高光动画
-        screen_img = screenShot()  # 失败直接重试
+        screen_img = self._screenshot()  # 失败直接重试
         img = screen_img.copy()  # for calculation
-        start = np.int32(PosTransfer([235, 1002], self.M))
-        O = PosTransfer([0, 0], self.M)
+        start = np.int32(pos_transform([235, 1002], self.M))
+        O = pos_transform([0, 0], self.M)
         colorThreshold = 110
         tileThreshold = np.int32(
-            0.7 * (PosTransfer(Layout.tileSize, self.M) - O))
+            0.7 * (pos_transform(Layout.tileSize, self.M) - O))
         fail = 0
-        maxFail = np.int32(PosTransfer([100, 0], self.M) - O)[0]
+        maxFail = np.int32(pos_transform([100, 0], self.M) - O)[0]
         i = 0
         while fail < maxFail:
-            x, y = start[0]+i, start[1]
+            x, y = start[0] + i, start[1]
             if all(img[y, x, :] > colorThreshold):
                 fail = 0
                 img[y, x, :] = colorThreshold
                 retval, image, mask, rect = cv2.floodFill(
                     image=img, mask=None, seedPoint=(x, y), newVal=(0, 0, 0),
-                    loDiff=(0, 0, 0), upDiff=tuple([255-colorThreshold]*3), flags=cv2.FLOODFILL_FIXED_RANGE)
+                    loDiff=(0, 0, 0), upDiff=tuple([255 - colorThreshold] * 3), flags=cv2.FLOODFILL_FIXED_RANGE)
                 x, y, dx, dy = rect
                 if dx > tileThreshold[0] and dy > tileThreshold[1]:
-                    tile_img = screen_img[y:y+dy, x:x+dx, :]
+                    tile_img = screen_img[y:y + dy, x:x + dx, :]
                     tileStr = self.classify(tile_img)
-                    result.append((tileStr, (x, y, x+dx, y+dy)))
-                    i = x+dx-start[0]
+                    result.append((tileStr, (x, y, x + dx, y + dy)))
+                    i = x + dx - start[0]
             else:
                 fail += 1
             i += 1
         return result
 
-    @auto_retry
+    @_auto_retry
     def clickButton(self, buttonImg, similarityThreshold=0.6):
         # 点击吃碰杠胡立直自摸
-        x0, y0 = np.int32(PosTransfer([0, 0], self.M))
-        x1, y1 = np.int32(PosTransfer(Layout.size, self.M))
+        x0, y0 = np.int32(pos_transform([0, 0], self.M))
+        x1, y1 = np.int32(pos_transform(Layout.size, self.M))
         zoom = (x1 - x0) / Layout.size[0]
         n, m, _ = buttonImg.shape
         n = int(n * zoom)
         m = int(m * zoom)
         templ = cv2.resize(buttonImg, (m, n))
-        x0, y0 = np.int32(PosTransfer([595, 557], self.M))
-        x1, y1 = np.int32(PosTransfer([1508, 912], self.M))
+        x0, y0 = np.int32(pos_transform([595, 557], self.M))
+        x1, y1 = np.int32(pos_transform([1508, 912], self.M))
 
-        screen = screenShot()
+        screen = self._screenshot()
         img = screen[y0:y1, x0:x1, :]
         T = cv2.matchTemplate(img, templ, cv2.TM_SQDIFF, mask=templ.copy())
         _, _, (x, y), _ = cv2.minMaxLoc(T)
@@ -346,17 +375,17 @@ class GUIInterface:
         dst = img[y:y + n, x:x + m].copy()
         dst[templ == 0] = 0
 
-        sim = Similarity(templ, dst)
+        sim = similarity(templ, dst)
         if sim >= similarityThreshold:
-            self._click_area(x+x0, y+y0, x+x0+m, y+y0+n, 0.5)
+            self._click_area(x + x0, y + y0, x + x0 + m, y + y0 + n, 0.5)
 
             # 等待按钮消失
             for _ in range(5):
-                screen = screenShot()
+                screen = self._screenshot()
                 dst = screen[y0:y1, x0:x1, :][y:y + n, x:x + m].copy()
                 dst[templ == 0] = 0
 
-                now_sim = Similarity(templ, dst)
+                now_sim = similarity(templ, dst)
                 if now_sim < similarityThreshold:
                     return
 
@@ -366,21 +395,21 @@ class GUIInterface:
         else:
             raise ActionFailed('button not found')
 
-    @auto_retry
+    @_auto_retry
     def clickCandidateMeld(self, tiles: List[str]):
         # 有多种不同的吃碰方法，二次点击选择
         assert (len(tiles) == 2)
         # find all combination tiles
         result = []
         assert (type(self.M) != type(None))
-        screen_img = screenShot()
+        screen_img = self._screenshot()
         img = screen_img.copy()  # for calculation
-        start = np.int32(PosTransfer([960, 753], self.M))
+        start = np.int32(pos_transform([960, 753], self.M))
         leftBound = rightBound = start[0]
-        O = PosTransfer([0, 0], self.M)
+        O = pos_transform([0, 0], self.M)
         colorThreshold = 200
-        tileThreshold = np.int32(0.7 * (PosTransfer((78, 106), self.M) - O))
-        maxFail = np.int32(PosTransfer([60, 0], self.M) - O)[0]
+        tileThreshold = np.int32(0.7 * (pos_transform((78, 106), self.M) - O))
+        maxFail = np.int32(pos_transform([60, 0], self.M) - O)[0]
         for offset in [-1, 1]:
             # 从中间向左右两个方向扫描
             i = 0
@@ -399,7 +428,7 @@ class GUIInterface:
                     if dx > tileThreshold[0] and dy > tileThreshold[1]:
                         tile_img = screen_img[y:y + dy, x:x + dx, :]
                         tileStr = self.classify(tile_img)
-                        result.append((tileStr, (x, y, x+dx, y+dy)))
+                        result.append((tileStr, (x, y, x + dx, y + dy)))
                         leftBound = min(leftBound, x)
                         rightBound = max(rightBound, x + dx)
                 i += 1
@@ -417,17 +446,17 @@ class GUIInterface:
 
     def actionReturnToMenu(self):
         # 在终局以后点击确定跳转回菜单主界面
-        x, y = np.int32(PosTransfer((1785, 1003), self.M))  # 终局确认按钮
+        x, y = np.int32(pos_transform((1785, 1003), self.M)).tolist()  # 终局确认按钮
         while True:
             time.sleep(5)
-            x0, y0 = np.int32(PosTransfer([0, 0], self.M))
-            x1, y1 = np.int32(PosTransfer(Layout.size, self.M))
-            img = screenShot()
-            S = Similarity(self.menuImg, img[y0:y1, x0:x1, :])
+            x0, y0 = np.int32(pos_transform([0, 0], self.M))
+            x1, y1 = np.int32(pos_transform(Layout.size, self.M))
+            img = self._screenshot()
+            S = similarity(self.menuImg, img[y0:y1, x0:x1, :])
             if S > 0.5:
                 return True
             else:
-                pyautogui.click(x=x, y=y, duration=0.5)
+                self.page.mouse.click(x, y)
 
     def actionBeginGame(self, level: int, wind: int):
         """
@@ -436,19 +465,22 @@ class GUIInterface:
         :param level: 0~4对应铜/银/金/玉/王座
         :param wind: 0对应四人东，1对应四人南
         """
-        x, y = np.int32(PosTransfer(Layout.duanWeiChang, self.M))
-        pyautogui.click(x, y)
+        x, y = np.int32(pos_transform(Layout.duanWeiChang, self.M)).tolist()
+        self.page.mouse.click(x, y)
         time.sleep(2)
         if level == 4:
             # 王座之间在屏幕外面需要先拖一下
-            x, y = np.int32(PosTransfer(Layout.menuButtons[2], self.M))
-            pyautogui.moveTo(x, y)
+            x, y = np.int32(pos_transform(Layout.menuButtons[2], self.M)).tolist()
+            self.page.mouse.click(x, y)
             time.sleep(1.5)
-            x, y = np.int32(PosTransfer(Layout.menuButtons[0], self.M))
-            pyautogui.dragTo(x, y)
+
+            x, y = np.int32(pos_transform(Layout.menuButtons[0], self.M)).tolist()
+            self.page.mouse.down()
+            self.page.mouse.move(x, y)
+            self.page.mouse.up()
             time.sleep(1.5)
-        x, y = np.int32(PosTransfer(Layout.menuButtons[level], self.M))
-        pyautogui.click(x, y)
+        x, y = np.int32(pos_transform(Layout.menuButtons[level], self.M)).tolist()
+        self.page.mouse.click(x, y)
         time.sleep(2)
-        x, y = np.int32(PosTransfer(Layout.menuButtons[wind], self.M))
-        pyautogui.click(x, y)
+        x, y = np.int32(pos_transform(Layout.menuButtons[wind], self.M)).tolist()
+        self.page.mouse.click(x, y)

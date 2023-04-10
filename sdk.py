@@ -1,21 +1,11 @@
 # -*- coding: utf-8 -*-
 # Json报文映射到动作回调函数
-import argparse
-import functools
-import inspect
-import pickle
-import re
-import time
 from enum import Enum
 from typing import Dict, List
-from xmlrpc.client import ServerProxy
 
 from loguru import logger as logging
 
-try:
-    from liqi import LiqiProto, MsgType
-except:
-    from .liqi import LiqiProto, MsgType
+from .liqi import MsgType
 
 PRINT_LOG = True  # whether print args when enter handler
 
@@ -34,22 +24,6 @@ class Operation(Enum):
     Liqi = 7
     Zimo = 8
     Hu = 9
-
-
-def dump_args(func):
-    # Decorator to print function call details - parameters names and effective values.
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        if PRINT_LOG:
-            func_args = inspect.signature(func).bind(*args, **kwargs).arguments
-            func_args_str = ', '.join('{} = {!r}'.format(*item)
-                                      for item in func_args.items())
-            func_args_str = re.sub(r' *self.*?=.*?, *', '', func_args_str)
-            # print(f'{func.__module__}.{func.__qualname__} ( {func_args_str} )')
-            logging.info(f'{func.__name__} ({func_args_str})')
-        return func(*args, **kwargs)
-
-    return wrapper
 
 
 class MajsoulHandler:
@@ -97,7 +71,8 @@ class MajsoulHandler:
                 self.doras = []
                 return self.authGame(self.accountId, self.seatList)
         elif method == '.lq.NotifyGameEndResult':
-            self.finalScore = [i['partPoint1'] for i in liqi_dict['data']['result']['players']]
+            self.finalScore = [i['partPoint1']
+                               for i in liqi_dict['data']['result']['players']]
             self.endGame()
             return
         elif method == '.lq.ActionPrototype':
@@ -208,7 +183,6 @@ class MajsoulHandler:
 
     # -------------------------Majsoul回调函数-------------------------
 
-    @dump_args
     def authGame(self, accountId: int, seatList: List[int]):
         """
         accountId:我的userID
@@ -216,7 +190,6 @@ class MajsoulHandler:
         """
         assert (len(seatList) == 4)
 
-    @dump_args
     def newRound(self, chang: int, ju: int, ben: int, liqibang: int, tiles: List[str], scores: List[int],
                  leftTileCount: int, doras: List[str]):
         """
@@ -236,14 +209,12 @@ class MajsoulHandler:
         assert (all(dora in all_tiles for dora in doras))
         assert (len(doras) == 1)
 
-    @dump_args
     def newDora(self, dora: str):
         """
         tile:新增加的明宝牌
         """
         assert (dora in all_tiles)
 
-    @dump_args
     def discardTile(self, seat: int, tile: str, moqie: bool, isLiqi: bool, operation):
         """
         seat:打牌的玩家
@@ -263,7 +234,6 @@ class MajsoulHandler:
                 op['type'] == Operation.MingGang.value for op in opList)
             canHu = any(op['type'] == Operation.Hu.value for op in opList)
 
-    @dump_args
     def dealTile(self, seat: int, leftTileCount: int, liqi: Dict):
         """
         seat:摸牌的玩家
@@ -273,7 +243,6 @@ class MajsoulHandler:
         assert (0 <= seat < 4)
         assert (type(liqi) == dict or liqi == None)
 
-    @dump_args
     def iDealTile(self, seat: int, tile: str, leftTileCount: int, liqi: Dict, operation: Dict):
         """
         seat:我自己
@@ -294,7 +263,6 @@ class MajsoulHandler:
             canZimo = any(op['type'] == Operation.Zimo.value for op in opList)
             canHu = any(op['type'] == Operation.Hu.value for op in opList)
 
-    @dump_args
     def chiPengGang(self, type_: int, seat: int, tiles: List[str], froms: List[int], tileStates: List[int]):
         """
         type_:操作类型
@@ -323,7 +291,6 @@ class MajsoulHandler:
         else:
             raise NotImplementedError
 
-    @dump_args
     def anGangAddGang(self, type_: int, seat: int, tiles: str):
         """
         type_:操作类型
@@ -340,7 +307,6 @@ class MajsoulHandler:
         else:
             raise NotImplementedError
 
-    @dump_args
     def hule(self, hand: List[str], huTile: str, seat: int, zimo: bool, liqi: bool, doras: List[str],
              liDoras: List[str], fan: int, fu: int, oldScores: List[int], deltaScores: List[int], newScores: List[int]):
         """
@@ -363,7 +329,6 @@ class MajsoulHandler:
         assert (all(tile in all_tiles for tile in doras))
         assert (all(tile in all_tiles for tile in liDoras))
 
-    @dump_args
     def liuju(self, tingpai: List[bool], hands: List[List[str]], oldScores: List[int], deltaScores: List[int]):
         """
         tingpai:4个玩家是否停牌
@@ -373,99 +338,17 @@ class MajsoulHandler:
         """
         assert (all(tile in all_tiles for hand in hands for tile in hand))
 
-    @dump_args
     def specialLiuju(self):
         """
         四风连打、九种九牌、四杠散了引起的流局
         """
         pass
 
-    @dump_args
     def beginGame(self):
         # 开始整场对局
         self.isMajsoulReady = True
 
-    @dump_args
     def endGame(self):
         # 结束整场对局
         self.isMajsoulReady = False
         self.isEnd = True
-
-    # -------------------------Majsoul动作函数-------------------------
-
-    @dump_args
-    def actionDiscardTile(self, tile: str):
-        """
-        tile:要打的手牌
-        """
-        assert (tile in all_tiles)
-
-    @dump_args
-    def actionLiqi(self, tile: str):
-        """
-        tile:立直要打的手牌
-        """
-        assert (tile in all_tiles)
-
-    @dump_args
-    def actionHu(self):
-        """
-        点炮了！
-        """
-
-    @dump_args
-    def actionZimo(self):
-        """
-        自摸了！
-        """
-
-    @dump_args
-    def actionChiPengGang(self, type: Operation, tiles: List[str]):
-        """
-        type:操作类型
-        """
-
-
-def dumpWebSocket(filename='ws_dump.pkl'):
-    # 监听mitmproxy当前websocket，将所有报文按顺序交由handler.parse
-    server = ServerProxy("http://127.0.0.1:37247")  # 初始化服务器
-    liqi = LiqiProto()
-    tot = 0
-    history_msg = []
-    handler = MajsoulHandler()
-    while True:
-        n = server.get_len()
-        if tot < n:
-            flow = pickle.loads(server.get_items(tot, n).data)
-            for flow_msg in flow:
-                result = liqi.parse(flow_msg)
-                handler.parse(result)
-                tot += 1
-            history_msg = history_msg + flow
-            pickle.dump(history_msg, open(filename, 'wb'))
-        time.sleep(0.2)
-
-
-def replayWebSocket(filename='ws_dump.pkl'):
-    # 回放历史websocket报文，按顺序交由handler.parse
-    handler = MajsoulHandler()
-    history_msg = pickle.load(open(filename, 'rb'))
-    liqi = LiqiProto()
-    for flow_msg in history_msg:
-        result = liqi.parse(flow_msg)
-        handler.parse(result)
-
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Demo of SDK")
-    parser.add_argument('-d', '--dump', default='')
-    parser.add_argument('-l', '--load', default='')
-    args = parser.parse_args()
-    if args.dump != '':
-        dumpWebSocket(args.dump)
-    elif args.load != '':
-        replayWebSocket(args.load)
-    else:
-        print('Instruction not supported.')
-        print('Use "python -m majsoul_wrapper.sdk --dump FILE"')
-        print(' or "python -m majsoul_wrapper.sdk --load FILE"')
