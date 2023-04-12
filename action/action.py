@@ -303,7 +303,7 @@ class GUIInterface:
     def actionLiuju(self):
         self.clickButton(self.liujuImg)
 
-    def calibrateMenu(self):
+    def _calibrateMenu(self):
         # if the browser is on the initial menu, set self.M and return to True
         # if not return False
         self.M = getHomographyMatrix(self.menuImg, self._screenshot(), threshold=0.6)
@@ -312,6 +312,13 @@ class GUIInterface:
             return True
         else:
             return False
+        
+    def calibrateMenu(self):
+        logging.info('waiting to calibrate the browser location')
+        while not self._calibrateMenu():
+            time.sleep(3)
+        logging.success('calibrate succeed')
+
 
     def _getHandTiles(self) -> List[Tuple[str, Tuple[int, int, int, int]]]:
         # return a list of my tiles' position
