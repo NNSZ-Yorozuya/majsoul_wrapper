@@ -19,6 +19,7 @@ class Operation(Enum):
     Discard = 1
     Chi = 2
     Peng = 3
+    AnGang = 4
     MingGang = 5
     JiaGang = 6
     Liqi = 7

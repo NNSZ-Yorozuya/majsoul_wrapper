@@ -286,7 +286,7 @@ class GUIInterface:
             self.clickButton(self.chiImg)
         elif type_ == Operation.Peng:
             self.clickButton(self.pengImg)
-        elif type_ in (Operation.MingGang, Operation.JiaGang):
+        elif type_ in (Operation.AnGang, Operation.MingGang, Operation.JiaGang):
             self.clickButton(self.gangImg)
 
     def actionLiqi(self, tile: str):
@@ -306,19 +306,19 @@ class GUIInterface:
     def _calibrateMenu(self):
         # if the browser is on the initial menu, set self.M and return to True
         # if not return False
-        self.M = getHomographyMatrix(self.menuImg, self._screenshot(), threshold=0.6)
+        self.M = getHomographyMatrix(
+            self.menuImg, self._screenshot(), threshold=0.6)
         if self.M is not None:
             self.waitPos = np.int32(pos_transform([100, 100], self.M)).tolist()
             return True
         else:
             return False
-        
+
     def calibrateMenu(self):
         logging.info('waiting to calibrate the browser location')
         while not self._calibrateMenu():
             time.sleep(3)
         logging.success('calibrate succeed')
-
 
     def _getHandTiles(self) -> List[Tuple[str, Tuple[int, int, int, int]]]:
         # return a list of my tiles' position
@@ -389,9 +389,9 @@ class GUIInterface:
             raise ActionFailed('button not found')
 
     @_auto_retry
-    def clickCandidateMeld(self, tiles: List[str]):
+    def clickCandidateMeld(self, tiles: List[str], meld_size: int = 2):
         # 有多种不同的吃碰方法，二次点击选择
-        assert (len(tiles) == 2)
+        assert (len(tiles) == meld_size)
         # find all combination tiles
         result = []
         assert (type(self.M) != type(None))
@@ -428,10 +428,10 @@ class GUIInterface:
         result = sorted(result, key=lambda x: x[1][0])
         if len(result) == 0:
             return True  # 其他人先抢先Meld了！
-        assert (len(result) % 2 == 0)
-        for i in range(0, len(result), 2):
-            if result[i][0] == tiles[0] and result[i + 1][0] == tiles[1]:
-                x, y, m, n = result[i][1]
+        assert (len(result) % meld_size == 0)
+        for i in range(0, len(result), meld_size):
+            if all(map(lambda j: result[i][j] == tiles[j], range(0, meld_size))):
+                x, y, m, n = result[i][meld_size//2]
                 self._click_area(x, y, m, n)
                 return True
         raise ActionFailed('combination not found, tiles:',
@@ -463,17 +463,21 @@ class GUIInterface:
         time.sleep(2)
         if level == 4:
             # 王座之间在屏幕外面需要先拖一下
-            x, y = np.int32(pos_transform(Layout.menuButtons[2], self.M)).tolist()
+            x, y = np.int32(pos_transform(
+                Layout.menuButtons[2], self.M)).tolist()
             self.page.mouse.click(x, y)
             time.sleep(1.5)
 
-            x, y = np.int32(pos_transform(Layout.menuButtons[0], self.M)).tolist()
+            x, y = np.int32(pos_transform(
+                Layout.menuButtons[0], self.M)).tolist()
             self.page.mouse.down()
             self.page.mouse.move(x, y)
             self.page.mouse.up()
             time.sleep(1.5)
-        x, y = np.int32(pos_transform(Layout.menuButtons[level], self.M)).tolist()
+        x, y = np.int32(pos_transform(
+            Layout.menuButtons[level], self.M)).tolist()
         self.page.mouse.click(x, y)
         time.sleep(2)
-        x, y = np.int32(pos_transform(Layout.menuButtons[wind], self.M)).tolist()
+        x, y = np.int32(pos_transform(
+            Layout.menuButtons[wind], self.M)).tolist()
         self.page.mouse.click(x, y)
