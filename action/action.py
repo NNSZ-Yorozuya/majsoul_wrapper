@@ -427,13 +427,13 @@ class GUIInterface:
                 i += 1
         result = sorted(result, key=lambda x: x[1][0])
         if len(result) == 0:
-            return True  # 其他人先抢先Meld了！
+            raise ActionFailed('no combination')
         assert (len(result) % meld_size == 0)
         for i in range(0, len(result), meld_size):
-            if all(map(lambda j: result[i][j] == tiles[j], range(0, meld_size))):
-                x, y, m, n = result[i][meld_size//2]
+            if all(map(lambda j: result[i+j][0] == tiles[j], range(0, meld_size))):
+                x, y, m, n = result[i+meld_size//2][1]
                 self._click_area(x, y, m, n)
-                return True
+                return
         raise ActionFailed('combination not found, tiles:',
                            tiles, ' combination:', result)
 
@@ -447,7 +447,7 @@ class GUIInterface:
             img = self._screenshot()
             S = similarity(self.menuImg, img[y0:y1, x0:x1, :])
             if S > 0.5:
-                return True
+                return
             else:
                 self.page.mouse.click(x, y)
 
